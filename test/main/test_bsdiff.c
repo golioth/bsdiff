@@ -65,26 +65,36 @@ static int bsdiff_f(char* oldf, char* newf, char* patchf)
     return newsize;
 }
 
-static int _r(const struct bspatch_stream* stream, void* buffer, int length)
-{
-    if (fread(buffer, 1, length, (FILE*)stream->opaque) != length) {
-        return -1;
-    }
-    return 0;
-}
-
-static int _or(const struct bspatch_stream_i* stream, void* buffer, int pos, int length)
-{
-    uint8_t* old;
-    old = (uint8_t*)stream->opaque;
-    memcpy(buffer, old + pos, length);
-    return 0;
-}
-
 struct NewCtx {
     uint8_t* new;
     int pos_write;
 };
+
+struct OldCtx {
+	uint8_t* old;
+	int oldsize;
+};
+
+
+static int _r(const struct bspatch_stream* stream, void* buffer, int length)
+{
+	return fread(buffer, 1, length, (FILE*)stream->opaque);
+}
+
+static int _or(const struct bspatch_stream_i* stream, void* buffer, int pos, int length)
+{
+	struct OldCtx* old_ctx = (struct OldCtx*)stream->opaque;
+	if (pos >= old_ctx->oldsize) {
+		// printf("bad pos\n");
+		return -1;
+	} else if (pos + length > old_ctx->oldsize) {
+		// printf("bad pos extend\n");
+		return -2;
+	}
+	// printf("old read 0x%X, %d\n", pos, length);
+	memcpy(buffer, old_ctx->old + pos, length);
+	return 0;
+}
 
 static int _nw(const struct bspatch_stream_n* stream, const void* buffer, int length)
 {
@@ -120,14 +130,16 @@ static int bspatch_f(char* oldf, char* newf, size_t newfs, char* patchf)
         return -1;
     }
 
+    struct OldCtx old_ctx = { .old = old, .oldsize = oldsize };
+
     stream.read = _r;
     oldstream.read = _or;
     newstream.write = _nw;
     stream.opaque = f;
-    oldstream.opaque = old;
+    oldstream.opaque = &old_ctx;
     struct NewCtx ctx = { .pos_write = 0, .new = new };
     newstream.opaque = &ctx;
-    if (bspatch(&oldstream, &newstream, newfs, &stream)) {
+    if (bspatch(&oldstream, &newstream, &stream)) {
         return -1;
     }
 

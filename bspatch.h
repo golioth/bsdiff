@@ -48,7 +48,7 @@ struct bspatch_stream_n
 	int (*write)(const struct bspatch_stream_n* stream, const void *buffer, int length);
 };
 
-int bspatch(struct bspatch_stream_i* old, struct bspatch_stream_n* new, int64_t newsize, struct bspatch_stream* stream);
+int bspatch(struct bspatch_stream_i* old, struct bspatch_stream_n* new, struct bspatch_stream* patch);
 
 #endif
 

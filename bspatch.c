@@ -1,4 +1,4 @@
-﻿/*-
+/*-
  * Copyright 2003-2005 Colin Percival
  * Copyright 2012 Matthew Endsley
  * All rights reserved
@@ -30,6 +30,7 @@
 #ifdef ESP_PLATFORM
 #include <sdkconfig.h>
 #endif
+#include <stdio.h>
 
 #ifndef CONFIG_BSDIFF_BSPATCH_BUF_SIZE
 #define CONFIG_BSDIFF_BSPATCH_BUF_SIZE (8 * 1024)
@@ -46,11 +47,12 @@
 #define BUF_SIZE CONFIG_BSDIFF_BSPATCH_BUF_SIZE
 #define ERROR_BSPATCH (-1)
 
-#define RETURN_IF_NON_ZERO(expr)        \
+#define RETURN_IF_NEGATIVE(expr)        \
     do                                  \
     {                                   \
         const int ret = (expr);         \
-        if (ret) {                      \
+        if (ret < 0) {                      \
+            printf("Error on line %d\n", __LINE__); \
             return ret;                 \
         }                               \
     } while(0)
@@ -80,7 +82,7 @@ static int64_t offtin(uint8_t *buf)
  * Returns -1 on error in patching logic
  * Returns any non-zero return code from stream read() and write() functions (which imply error)
  */
-int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, int64_t newsize, struct bspatch_stream* stream)
+int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, struct bspatch_stream* patch)
 {
 	uint8_t buf[BUF_SIZE];
 	int64_t oldpos,newpos;
@@ -90,30 +92,36 @@ int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, int64_t 
 	const int64_t half_len = BUF_SIZE / 2;
 
 	oldpos=0;newpos=0;
-	while(newpos<newsize) {
+
+        /* Will break out of the loop when an error occurs (e.g. when there is no data to read from
+         * the old or patch streams */
+	while (1) {
 		/* Read control data */
 		for(i=0;i<=2;i++) {
-			RETURN_IF_NON_ZERO(stream->read(stream, buf, 8));
+			int nread_patch = patch->read(patch, buf, 8);
+			if (nread_patch == 0) {
+				/* end of patch input */
+				return 0;
+			}
+			RETURN_IF_NEGATIVE(nread_patch);
 			ctrl[i]=offtin(buf);
 		}
 
 		/* Sanity-check */
-		if (ctrl[0]<0 || ctrl[0]>INT_MAX ||
-			ctrl[1]<0 || ctrl[1]>INT_MAX ||
-			newpos+ctrl[0]>newsize)
+		if (ctrl[0]<0 || ctrl[0]>INT_MAX || ctrl[1]<0 || ctrl[1]>INT_MAX)
 			return ERROR_BSPATCH;
 
 		/* Read diff string and add old data on the fly */
 		i = ctrl[0];
 		while (i) {
 			towrite = min(i, half_len);
-			RETURN_IF_NON_ZERO(stream->read(stream, &buf[half_len], towrite));
-			RETURN_IF_NON_ZERO(old->read(old, buf, oldpos + (ctrl[0] - i), towrite));
+			RETURN_IF_NEGATIVE(patch->read(patch, &buf[half_len], towrite));
+			RETURN_IF_NEGATIVE(old->read(old, buf, oldpos + (ctrl[0] - i), towrite));
 
 			for(k=0;k<towrite;k++)
 				buf[k + half_len] += buf[k];
 
-			RETURN_IF_NON_ZERO(new->write(new, &buf[half_len], towrite));
+			RETURN_IF_NEGATIVE(new->write(new, &buf[half_len], towrite));
 			i -= towrite;
 		}
 
@@ -121,16 +129,12 @@ int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, int64_t 
 		newpos+=ctrl[0];
 		oldpos+=ctrl[0];
 
-		/* Sanity-check */
-		if(newpos+ctrl[1]>newsize)
-			return ERROR_BSPATCH;
-
 		/* Read extra string and copy over to new on the fly*/
 		i = ctrl[1];
 		while (i) {
 			towrite = min(i, BUF_SIZE);
-			RETURN_IF_NON_ZERO(stream->read(stream, buf, towrite));
-			RETURN_IF_NON_ZERO(new->write(new, buf, towrite));
+			RETURN_IF_NEGATIVE(patch->read(patch, buf, towrite));
+			RETURN_IF_NEGATIVE(new->write(new, buf, towrite));
 			i -= towrite;
 		}
 
@@ -154,25 +158,35 @@ int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, int64_t 
 #include <unistd.h>
 #include <fcntl.h>
 
-static int __read(const struct bspatch_stream* stream, void* buffer, int length)
-{
-	if (fread(buffer, 1, length, (FILE*)stream->opaque) != length) {
-		return -1;
-	}
-	return 0;
-}
-
-static int old_read(const struct bspatch_stream_i* stream, void* buffer, int pos, int length) {
-	uint8_t* old;
-	old = (uint8_t*)stream->opaque;
-	memcpy(buffer, old + pos, length);
-	return 0;
-}
-
 struct NewCtx {
 	uint8_t* new;
 	int pos_write;
 };
+
+struct OldCtx {
+	uint8_t* old;
+	int oldsize;
+};
+
+
+static int __read(const struct bspatch_stream* stream, void* buffer, int length)
+{
+	return fread(buffer, 1, length, (FILE*)stream->opaque);
+}
+
+static int old_read(const struct bspatch_stream_i* stream, void* buffer, int pos, int length) {
+	struct OldCtx* old_ctx = (struct OldCtx*)stream->opaque;
+	if (pos >= old_ctx->oldsize) {
+		// printf("bad pos\n");
+		return -1;
+	} else if (pos + length > old_ctx->oldsize) {
+		// printf("bad pos extend\n");
+		return -2;
+	}
+	// printf("old read 0x%X, %d\n", pos, length);
+	memcpy(buffer, old_ctx->old + pos, length);
+	return 0;
+}
 
 static int new_write(const struct bspatch_stream_n* stream, const void *buffer, int length) {
 	struct NewCtx* new;
@@ -211,14 +225,16 @@ int main(int argc,char * argv[])
 		(close(fd)==-1)) err(1,"%s",argv[1]);
 	if((new=malloc(newsize+1))==NULL) err(1,NULL);
 
+	struct OldCtx old_ctx = { .old = old, .oldsize = oldsize };
+
 	stream.read = __read;
 	oldstream.read = old_read;
 	newstream.write = new_write;
 	stream.opaque = f;
-	oldstream.opaque = old;
+	oldstream.opaque = &old_ctx;
 	struct NewCtx ctx = { .pos_write = 0, .new = new };
 	newstream.opaque = &ctx;
-	if (bspatch(&oldstream, &newstream, newsize, &stream))
+	if (bspatch(&oldstream, &newstream, &stream))
 		errx(1, "bspatch");
 
 	/* Clean up */
