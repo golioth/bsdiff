@@ -4,7 +4,7 @@
  * All rights reserved
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted providing that the following conditions 
+ * modification, are permitted providing that the following conditions
  * are met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
@@ -80,7 +80,7 @@ static int64_t offtin(uint8_t *buf)
  * Returns -1 on error in patching logic
  * Returns any non-zero return code from stream read() and write() functions (which imply error)
  */
-int bspatch(struct bspatch_stream_i *old, int64_t oldsize, struct bspatch_stream_n *new, int64_t newsize, struct bspatch_stream* stream)
+int bspatch(struct bspatch_stream_i *old, struct bspatch_stream_n *new, int64_t newsize, struct bspatch_stream* stream)
 {
 	uint8_t buf[BUF_SIZE];
 	int64_t oldpos,newpos;
@@ -218,7 +218,7 @@ int main(int argc,char * argv[])
 	oldstream.opaque = old;
 	struct NewCtx ctx = { .pos_write = 0, .new = new };
 	newstream.opaque = &ctx;
-	if (bspatch(&oldstream, oldsize, &newstream, newsize, &stream))
+	if (bspatch(&oldstream, &newstream, newsize, &stream))
 		errx(1, "bspatch");
 
 	/* Clean up */

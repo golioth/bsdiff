@@ -127,7 +127,7 @@ static int bspatch_f(char* oldf, char* newf, size_t newfs, char* patchf)
     oldstream.opaque = old;
     struct NewCtx ctx = { .pos_write = 0, .new = new };
     newstream.opaque = &ctx;
-    if (bspatch(&oldstream, oldsize, &newstream, newfs, &stream)) {
+    if (bspatch(&oldstream, &newstream, newfs, &stream)) {
         return -1;
     }
 
