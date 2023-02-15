@@ -1,3 +1,24 @@
+# golioth/bsdiff
+
+This is a fork of https://github.com/Blockstream/esp32_bsdiff (which itself is a fork of
+https://github.com/mendsley/bsdiff).
+
+The primary change made in this fork is that `bspatch()` has been redesigned as a state machine,
+in order to process patch data in small, incremental chunks. This is useful to avoid having to
+store the entire patch file in RAM or flash.
+
+To run unit tests (requires ESP-IDF to be installed at `$IDF_INSTALL_PATH`):
+
+```sh
+cd test
+source $IDF_INSTALL_PATH/export.sh
+./run.sh
+```
+
+The unit tests compile and run for your host machine, not the ESP32.
+
+The remainder of this README is from the upstream repo.
+
 # bspatch for esp32
 
 This project adds support for bspatch to the esp32 with some changes: no compression (bz2), no header and changed the interfaces to allow streaming all inputs and outputs.
