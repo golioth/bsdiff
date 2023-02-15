@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <unity.h>
 
+#define min(A, B) ((A) < (B) ? (A) : (B))
+
 static int _w(struct bsdiff_stream* stream, const void* buffer, int size)
 {
     if (fwrite(buffer, size, 1, (FILE*)stream->opaque) != 1) {
@@ -76,22 +78,14 @@ struct OldCtx {
 };
 
 
-static int _r(const struct bspatch_stream* stream, void* buffer, int length)
-{
-	return fread(buffer, 1, length, (FILE*)stream->opaque);
-}
-
 static int _or(const struct bspatch_stream_i* stream, void* buffer, int pos, int length)
 {
 	struct OldCtx* old_ctx = (struct OldCtx*)stream->opaque;
 	if (pos >= old_ctx->oldsize) {
-		// printf("bad pos\n");
 		return -1;
 	} else if (pos + length > old_ctx->oldsize) {
-		// printf("bad pos extend\n");
 		return -2;
 	}
-	// printf("old read 0x%X, %d\n", pos, length);
 	memcpy(buffer, old_ctx->old + pos, length);
 	return 0;
 }
@@ -107,16 +101,17 @@ static int _nw(const struct bspatch_stream_n* stream, const void* buffer, int le
 
 static int bspatch_f(char* oldf, char* newf, size_t newfs, char* patchf)
 {
-    FILE* f;
     int fd;
-    uint8_t *old, *new;
+    uint8_t *old, *new, *patch;
     int64_t oldsize;
-    struct bspatch_stream stream;
+    int64_t patchsize;
     struct bspatch_stream_i oldstream;
     struct bspatch_stream_n newstream;
     struct stat sb;
 
-    if ((f = fopen(patchf, "r")) == NULL) {
+    if (((fd = open(patchf, O_RDONLY, 0)) < 0) || ((patchsize = lseek(fd, 0, SEEK_END)) == -1)
+        || ((patch = malloc(patchsize + 1)) == NULL) || (lseek(fd, 0, SEEK_SET) != 0) || (read(fd, patch, patchsize) != patchsize)
+        || (fstat(fd, &sb)) || (close(fd) == -1)) {
         return -1;
     }
 
@@ -126,24 +121,37 @@ static int bspatch_f(char* oldf, char* newf, size_t newfs, char* patchf)
         return -1;
     }
 
+    if (((fd = open(patchf, O_RDONLY, 0)) < 0)
+	|| ((patchsize = lseek(fd, 0, SEEK_END)) == -1)
+	|| (lseek(fd, 0, SEEK_SET) != 0)
+	|| (close(fd) == -1)) {
+	    return -1;
+    }
+
     if ((new = malloc(newfs + 1)) == NULL) {
         return -1;
     }
 
     struct OldCtx old_ctx = { .old = old, .oldsize = oldsize };
 
-    stream.read = _r;
     oldstream.read = _or;
     newstream.write = _nw;
-    stream.opaque = f;
     oldstream.opaque = &old_ctx;
     struct NewCtx ctx = { .pos_write = 0, .new = new };
     newstream.opaque = &ctx;
-    if (bspatch(&oldstream, &newstream, &stream)) {
-        return -1;
-    }
 
-    fclose(f);
+    struct bspatch_ctx bspatch_ctx = {};
+    int patch_remaining = patchsize;
+    while (patch_remaining) {
+	    int patch_offset = patchsize - patch_remaining;
+	    int patch_chunk_sz = min(patch_remaining, 512);
+	    BSPATCH_DEBUG("--------------\n");
+	    int patch_result = bspatch(&bspatch_ctx, &oldstream, &newstream, patch + patch_offset, patch_chunk_sz);
+	    if (patch_result < 0) {
+		    return patch_result;
+	    }
+	    patch_remaining -= patch_chunk_sz;
+    }
 
     if (((fd = open(newf, O_CREAT | O_TRUNC | O_WRONLY, sb.st_mode)) < 0) || (write(fd, new, newfs) != newfs)
         || (close(fd) == -1)) {
