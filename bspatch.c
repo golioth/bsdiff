@@ -76,6 +76,7 @@ int bspatch(struct bspatch_ctx* ctx,
 
 		switch (ctx->state) {
 			case BSPATCH_STATE_RESET:
+			{
 				/* Reset everything except oldpos, which needs to persist across
 				 * control blocks */
 				int oldpos = ctx->oldpos;
@@ -83,8 +84,10 @@ int bspatch(struct bspatch_ctx* ctx,
 				ctx->oldpos = oldpos;
 				ctx->state = BSPATCH_STATE_RD_CTRL;
 				break;
+			}
 
 			case BSPATCH_STATE_RD_CTRL:
+			{
 				/*
 				 * Read 3 control data words (each 8 bytes).
 				 *
@@ -127,8 +130,10 @@ int bspatch(struct bspatch_ctx* ctx,
 				patch_remaining -= ctrl_to_read;
 
 				break;
+			}
 
 			case BSPATCH_STATE_RD_DIFF:
+			{
 				int diff_remaining = ctx->ctrl[0] - ctx->diff_offset;
 				assert(diff_remaining >= 0);
 				if (diff_remaining == 0) {
@@ -156,8 +161,10 @@ int bspatch(struct bspatch_ctx* ctx,
 				BSPATCH_DEBUG("diff write %d\n", diff_towrite);
 				RETURN_IF_NEGATIVE(new->write(new, &ctx->buf[half_len], diff_towrite));
 				break;
+			}
 
 			case BSPATCH_STATE_RD_EXTRA:
+			{
 				int extra_remaining = ctx->ctrl[1] - ctx->extra_offset;
 				assert(extra_remaining >= 0);
 				if (extra_remaining == 0) {
@@ -178,6 +185,7 @@ int bspatch(struct bspatch_ctx* ctx,
 				ctx->extra_offset += extra_towrite;
 				patch_remaining -= extra_towrite;
 				break;
+			}
 
 			default:
 				break;
